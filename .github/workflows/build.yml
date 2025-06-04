@@ -1,0 +1,47 @@
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+
+  build:
+  
+    runs-on: windows-latest
+    
+    steps:
+    
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24.x'
+
+
+    - name: Build
+      id: buildAsset
+      run: |
+        go build -v ./...
+
+    # https://github.com/marketplace/actions/release-changelog-builder
+    - name: Generate release notes
+      id: releaseNotes
+      uses: mikepenz/release-changelog-builder-action@v5
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        mode: "COMMIT" # "COMMIT" mode builds release notes as a bulleted list of commit messages since the **previous** release **tag**
+        outputFile: notes.md
+
+    # gh command reference: https://cli.github.com/manual/
+    - name: Create release (with new .exe asset attached)
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      # the first argument to `gh release create` is the TAG that will be created and applied to this new release
+      run: |
+        gh release create v${{ steps.assemblyVersion.outputs.version }} setxx.exe --notes-file notes.md      
