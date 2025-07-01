@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+var version = "dev"
+
 // isAdmin checks if the current process has administrator rights
 func isAdmin() bool {
 	var sid *windows.SID
@@ -377,7 +379,8 @@ func main() {
 			exeName = strings.TrimSuffix(exeName, ext)
 		}
 		fmt.Println()
-		fmt.Println("** PERMANENT environment variables tool **")
+		fmt.Printf("%s %s: an environment variables tool\n", exeName, version)
+		fmt.Println()
 		fmt.Println("- sets global Windows environment variable registry entries")
 		fmt.Println("- and broadcasts the standard Windows wide message to signal environment changes to running applications")
 		fmt.Println()

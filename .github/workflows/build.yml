@@ -54,44 +54,31 @@ jobs:
 
         # start with incrementing the semver which has 3 pieces: 1.0.x
         $newReleaseSemVer="1.0.$([int]$lastRelease.split(".")[2]+1)"
+        $newTag="v$newReleaseSemVer"
         # create windows file version which has 4 pieces: 1.0.x.0
         $windowsFileVersion="$($newReleaseSemVer).0"
 
         # create the .syso file with the windows version numbers that will get linked into the .exe build below
         #   windows PRODUCT version number can have characters versus just numbers: v1.0.x.0
         # fyi, if we ever want an app icon, we just need to create $\winres\winres.json file, see docs, it's easy
-        go-winres simply --file-version=$windowsFileVersion --product-version=v$windowsFileVersion --icon setxx.png
+        go-winres simply --file-version=$windowsFileVersion --product-version=v$windowsFileVersion --icon setxx.png --file-description=https://github.com/Beej126/setxx --product-name=setxx
 
         # create the tag that we will bind to the release at the end
-        git tag v$newReleaseSemVer
+        git tag $newTag
         git push origin --tags
 
         # kick out 'from' and 'to' tag variables for the release notes step next below
         # how to create *step output variables* in pwsh: https://stackoverflow.com/questions/69099977/using-outputs-of-powershell-in-github-actions/75630489#75630489
         Write-Output "lastTag=$lastRelease" >> $Env:GITHUB_OUTPUT
-        Write-Output "newTag=v$($newReleaseSemVer)" >> $Env:GITHUB_OUTPUT
+        Write-Output "newTag=$newTag" >> $Env:GITHUB_OUTPUT
 
         # just for debug visibility
         Write-Output "lastTag=$lastRelease"
-        Write-Output "newTag=v$($newReleaseSemVer)"
+        Write-Output "newTag=$newTag"
 
         # yeesh finally the actual build!
-        go build -ldflags "-X main.version=$($newReleaseSemVer)" -v ./...
+        go build -ldflags "-X main.version=$newTag" -v ./...
 
-
-  # had to split the build and release into 2 jobs so the new tag could "settle" in the first and thereby be available in the second
-  # release:
-  #   # makes sure this runs sequentially after so everything has been completed
-  #   needs: build
-  #   runs-on: windows-latest
-    
-    # steps:
-
-    # - uses: actions/checkout@v4
-    #   with:
-    #     # include tag metadata in the checkout so we can query it successfully with git commands
-    #     fetch-depth: 0
-    #     fetch-tags: true
 
     # https://github.com/marketplace/actions/release-changelog-builder
     - name: Generate release notes
