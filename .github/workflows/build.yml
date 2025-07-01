@@ -6,15 +6,34 @@ on:
   workflow_dispatch:
   push:
 
+permissions:
+  contents: write
+
 jobs:
 
   build:
-  
     runs-on: windows-latest
+    # makes variables available to OTHER JOBS, i.e. outside this job's steps
+    outputs:
+        lastTag: ${{ steps.buildAsset.outputs.lastTag }}
+        newTag: ${{ steps.buildAsset.outputs.newTag }}
     
     steps:
     
     - uses: actions/checkout@v4
+      with:
+        # _____                         _____                           _              _   
+        #/  ___|                       |_   _|                         | |            | |  
+        #\ `--. _   _ _ __   ___ _ __    | | _ __ ___  _ __   ___  _ __| |_ __ _ _ __ | |_ 
+        # `--. \ | | | '_ \ / _ \ '__|   | || '_ ` _ \| '_ \ / _ \| '__| __/ _` | '_ \| __|
+        #/\__/ / |_| | |_) |  __/ |     _| || | | | | | |_) | (_) | |  | || (_| | | | | |_ 
+        #\____/ \__,_| .__/ \___|_|     \___/_| |_| |_| .__/ \___/|_|   \__\__,_|_| |_|\__|
+        #            | |                              | |                                  
+        #            |_|                              |_|                                  
+        # include tag metadata in the checkout so we can query it successfully with git commands
+        fetch-depth: 0
+        fetch-tags: true
+
 
     - name: Set up Go
       uses: actions/setup-go@v4
@@ -22,10 +41,57 @@ jobs:
         go-version: '1.24.x'
 
 
-    - name: Build
+    - name: Install go-winres (.exe file-version resource stamper)
+      run: go install github.com/tc-hib/go-winres@latest
+
+
+    - name: Build (and generate script variables)
       id: buildAsset
       run: |
-        go build -v ./...
+        # this is copied straight from release builder's previous-tag query logic but doing here to generate new release number by +1'ing the previous release tag
+        # https://github.com/mikepenz/release-changelog-builder-action/blob/9d5249982e67893edf0382587243ff5fb50580c2/src/pr-collector/gitHelper.ts#L21
+        $lastRelease="$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=0 --max-count=1))"
+
+        # start with incrementing the semver which has 3 pieces: 1.0.x
+        $newReleaseSemVer="1.0.$([int]$lastRelease.split(".")[2]+1)"
+        # create windows file version which has 4 pieces: 1.0.x.0
+        $windowsFileVersion="$($newReleaseSemVer).0"
+
+        # create the .syso file with the windows version numbers that will get linked into the .exe build below
+        #   windows PRODUCT version number can have characters versus just numbers: v1.0.x.0
+        # fyi, if we ever want an app icon, we just need to create $\winres\winres.json file, see docs, it's easy
+        go-winres simply --file-version=$windowsFileVersion --product-version=v$windowsFileVersion --icon setxx.png
+
+        # create the tag that we will bind to the release at the end
+        git tag v$newReleaseSemVer
+        git push origin --tags
+
+        # kick out 'from' and 'to' tag variables for the release notes step next below
+        # how to create *step output variables* in pwsh: https://stackoverflow.com/questions/69099977/using-outputs-of-powershell-in-github-actions/75630489#75630489
+        Write-Output "lastTag=$lastRelease" >> $Env:GITHUB_OUTPUT
+        Write-Output "newTag=v$($newReleaseSemVer)" >> $Env:GITHUB_OUTPUT
+
+        # just for debug visibility
+        Write-Output "lastTag=$lastRelease"
+        Write-Output "newTag=v$($newReleaseSemVer)"
+
+        # yeesh finally the actual build!
+        go build -ldflags "-X main.version=$($newReleaseSemVer)" -v ./...
+
+
+  # had to split the build and release into 2 jobs so the new tag could "settle" in the first and thereby be available in the second
+  # release:
+  #   # makes sure this runs sequentially after so everything has been completed
+  #   needs: build
+  #   runs-on: windows-latest
+    
+    # steps:
+
+    # - uses: actions/checkout@v4
+    #   with:
+    #     # include tag metadata in the checkout so we can query it successfully with git commands
+    #     fetch-depth: 0
+    #     fetch-tags: true
 
     # https://github.com/marketplace/actions/release-changelog-builder
     - name: Generate release notes
@@ -34,14 +100,19 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        mode: "COMMIT" # "COMMIT" mode builds release notes as a bulleted list of commit messages since the **previous** release **tag**
-        outputFile: notes.md
+        # fromTag: ${{ needs.build.outputs.lastTag }}
+        # toTag: ${{ needs.build.outputs.newTag }}
+        fromTag: ${{ steps.buildAsset.outputs.lastTag }}
+        toTag: ${{ steps.buildAsset.outputs.newTag }}
+
 
     # gh command reference: https://cli.github.com/manual/
     - name: Create release (with new .exe asset attached)
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
-      # the first argument to `gh release create` is the TAG that will be created and applied to this new release
       run: |
-        gh release create v${{ steps.assemblyVersion.outputs.version }} setxx.exe --notes-file notes.md      
+        gh release create ${{ steps.buildAsset.outputs.newTag }} setxx.exe `
+          --title "Release ${{ steps.buildAsset.outputs.newTag }}" `
+          --notes "${{ steps.releaseNotes.outputs.changelog }}"
+
